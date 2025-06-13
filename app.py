@@ -13,24 +13,22 @@ from helper_functions import (
 
 st.title("Structural Modification of Molecules")
 
-# File upload in the main area
 uploaded_file = st.file_uploader("Upload XYZ File", type="xyz")
 
 if uploaded_file is not None:
-    # Read the XYZ file
-    atomic_symbols, atomic_coordinates = read_xyz(uploaded_file)
+    # Parse XYZ input
+    try:
+        atomic_symbols, atomic_coordinates = read_xyz(uploaded_file)
+    except Exception as e:
+        st.error(f"Error processing XYZ file: {e}")
+        st.stop()
 
-    # Display original structure with annotations
     st.subheader("Original Molecule Structure")
     xyz_string = create_xyz_string(atomic_symbols, atomic_coordinates)
 
     view = py3Dmol.view(width=800, height=400)
     view.addModel(xyz_string, "xyz")
-    view.setStyle({
-        'sphere': {'radius': 0.3},  
-        'stick': {'radius': 0.15}   
-    })
-    # Add labels to atoms
+    view.setStyle({'sphere': {'radius': 0.3}, 'stick': {'radius': 0.15}})
     for i, (symbol, coords) in enumerate(zip(atomic_symbols, atomic_coordinates)):
         view.addLabel(
             f"{i+1}",
@@ -41,7 +39,6 @@ if uploaded_file is not None:
                 "backgroundOpacity": 0.2,
             },
         )
-
     view.zoomTo()
     showmol(view, height=400, width=800)
 
@@ -83,94 +80,69 @@ if uploaded_file is not None:
     }
 
     modifications = []
-    add_another = True
-    modification_count = 0
+    count = 0
+    while True:
+        st.sidebar.subheader(f"Modification {count + 1}")
 
-    while add_another:
-        st.sidebar.subheader(f"Modification {modification_count + 1}")
-
-        # Choose modification type
         mod_type = st.sidebar.radio(
             "Modification type:",
             ["Substitution", "Addition", "Deletion"],
-            key=f"mod_type_{modification_count}",
+            key=f"mod_type_{count}",
         )
 
-        # Atom selection
-        atom_positions = list(range(1, len(atomic_symbols) + 1))
-        selected_positions = st.sidebar.multiselect(
-            f"Select atom(s) to modify:",
-            options=atom_positions,
-            format_func=lambda x: f"{atomic_symbols[x-1]} atom at position {x}",
-            key=f"atoms_{modification_count}",
+        atom_choices = list(range(1, len(atomic_symbols) + 1))
+        selected_atoms = st.sidebar.multiselect(
+            "Select atom(s) to modify:",
+            options=atom_choices,
+            format_func=lambda x: f"{atomic_symbols[x-1]} at position {x}",
+            key=f"atoms_{count}",
         )
 
-        # Group selection (only for Substitution and Addition)
         if mod_type in ["Substitution", "Addition"]:
-            group_category = st.sidebar.selectbox(
-                "Select functional group category:",
-                options=list(groups.keys()),
-                key=f"group_category_{modification_count}",
+            category = st.sidebar.selectbox(
+                "Group category:", list(groups.keys()), key=f"cat_{count}"
             )
-            selected_group = st.sidebar.selectbox(
-                f"Select group for modification:",
-                options=list(groups[group_category].keys()),
-                key=f"group_{modification_count}",
+            group_name = st.sidebar.selectbox(
+                "Functional group:", list(groups[category].keys()), key=f"group_{count}"
             )
-            group = groups[group_category][selected_group]
+            group = groups[category][group_name]
         else:
             group = None
 
-        for position in selected_positions:
-            modifications.append((mod_type, position - 1, group))
+        for atom_index in selected_atoms:
+            modifications.append((mod_type, atom_index - 1, group))
 
-        add_another = st.sidebar.checkbox(
-            "Add another modification", key=f"add_{modification_count}"
-        )
-        modification_count += 1
+        if not st.sidebar.checkbox("Add another modification", key=f"next_{count}"):
+            break
+        count += 1
 
     if st.sidebar.button("Perform Modifications"):
-        # Perform modifications
-        new_atomic_symbols = atomic_symbols.copy()
-        new_atomic_coordinates = atomic_coordinates.copy()
+        new_symbols = atomic_symbols.copy()
+        new_coords = atomic_coordinates.copy()
 
-        # Sort modifications to handle deletions last
-        modifications.sort(key=lambda x: (x[0] != "Deletion", x[1]), reverse=True)
+        # Deletions must be last to avoid index shifting
+        modifications.sort(key=lambda x: x[0] == "Deletion")
 
-        for mod_type, position, group in modifications:
+        for mod_type, idx, group in modifications:
             if mod_type == "Substitution":
-                new_atomic_symbols, new_atomic_coordinates = replace_atom_with_group(
-                    new_atomic_symbols,
-                    new_atomic_coordinates,
-                    position,
-                    group,
+                new_symbols, new_coords = replace_atom_with_group(
+                    new_symbols, new_coords, idx, group
                 )
             elif mod_type == "Addition":
-                new_atomic_symbols, new_atomic_coordinates = add_group_to_atom(
-                    new_atomic_symbols,
-                    new_atomic_coordinates,
-                    position,
-                    group,
+                new_symbols, new_coords = add_group_to_atom(
+                    new_symbols, new_coords, idx, group
                 )
             elif mod_type == "Deletion":
-                new_atomic_symbols, new_atomic_coordinates = delete_atoms(
-                    new_atomic_symbols, new_atomic_coordinates, [position]
-                )
+                new_symbols, new_coords = delete_atoms(new_symbols, new_coords, [idx])
 
-        # Display modified structure with annotations
+        # Show updated structure
         st.subheader("Modified Molecule Structure")
-        xyz_string = create_xyz_string(new_atomic_symbols, new_atomic_coordinates)
+        new_xyz = create_xyz_string(new_symbols, new_coords)
 
         view = py3Dmol.view(width=800, height=400)
-        view.addModel(xyz_string, "xyz")
-        view.setStyle({
-        'sphere': {'radius': 0.3},  
-        'stick': {'radius': 0.15}   
-    })
-        # Add labels to atoms
-        for i, (symbol, coords) in enumerate(
-            zip(new_atomic_symbols, new_atomic_coordinates)
-        ):
+        view.addModel(new_xyz, "xyz")
+        view.setStyle({'sphere': {'radius': 0.3}, 'stick': {'radius': 0.15}})
+        for i, (symbol, coords) in enumerate(zip(new_symbols, new_coords)):
             view.addLabel(
                 f"{i+1}",
                 {
@@ -180,15 +152,12 @@ if uploaded_file is not None:
                     "backgroundOpacity": 0.2,
                 },
             )
-
         view.zoomTo()
         showmol(view, height=400, width=800)
 
-        # Generate modified XYZ file for download
-        modified_xyz = write_xyz(new_atomic_symbols, new_atomic_coordinates)
         st.download_button(
             label="Download Modified XYZ File",
-            data=modified_xyz,
+            data=write_xyz(new_symbols, new_coords),
             file_name="modified_molecule.xyz",
             mime="text/plain",
         )
